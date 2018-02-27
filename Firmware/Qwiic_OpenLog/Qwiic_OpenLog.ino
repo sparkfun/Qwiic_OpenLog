@@ -95,6 +95,7 @@
   ADR jumper
   Library
   Check status byte
+  Add firmware version
 
 */
 
