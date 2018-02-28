@@ -3,6 +3,17 @@
   then these functions parse and respond to the command the user has sent.
 */
 
+//Internal EEPROM locations for the user settings
+#define LOCATION_SYSTEM_SETTING   0x02
+#define LOCATION_FILE_NUMBER_LSB  0x03
+#define LOCATION_FILE_NUMBER_MSB  0x04
+#define LOCATION_ESCAPE_CHAR    0x05
+#define LOCATION_MAX_ESCAPE_CHAR  0x06
+#define LOCATION_I2C_ADDRESS    0x0D
+
+#define MODE_NEWLOG     0
+#define MODE_SEQLOG     1
+
 //The number of command line arguments
 //Increase to support more arguments but be aware of the memory restrictions
 //command <arg1> <arg2> <arg3> <arg4> <arg5>
@@ -24,8 +35,8 @@ char general_buffer[30]; //Needed for command shell
 //Returns a status indicating a variety of possible errors
 void commandShell()
 {
-  systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Assume command failed
-  systemStatus |= (1<<STATUS_LAST_COMMAND_KNOWN); //Assume command is known
+  systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Assume command failed
+  systemStatus |= (1 << STATUS_LAST_COMMAND_KNOWN); //Assume command is known
 
   SdFile tempFile;
 
@@ -45,30 +56,187 @@ void commandShell()
   //Re-init the SD interface
   if (strcmp_P(commandArg, PSTR("init")) == 0)
   {
-    //NewSerial.println(F("Closing down file system"));
-    NewSerial.println(F("init"));
-
     if (!sd.begin(SD_CHIP_SELECT, SPI_FULL_SPEED)) systemError(ERROR_CARD_INIT);
     if (!sd.chdir()) systemError(ERROR_ROOT_INIT); //Change to root directory
 
-    //NewSerial.println(F("File system initialized"));
-    systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
     return;
   }
 
   //Set which type of logging the user wants
   else if (strcmp_P(commandArg, PSTR("set")) == 0)
   {
-    NewSerial.println(F("set"));
-
     //Argument 1: Number of logging type to go to
     commandArg = getCmdArg(1);
     if (commandArg == 0) return; //Argument missing. Command failed.
 
-    //Go into system setting menu
-    systemMenu(commandArg);
+    responseType = RESPONSE_STATUS;
 
-    systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    if (strToLong(commandArg) == 1) //Sequential logging mode
+    {
+      EEPROM.write(LOCATION_SYSTEM_SETTING, MODE_SEQLOG);
+    }
+    else //Normal logging mode for all other values we may be sent
+    {
+      EEPROM.write(LOCATION_SYSTEM_SETTING, MODE_NEWLOG);
+    }
+
+    newConfigData = true; //Tell the main loop to record the config.txt file
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    return;
+  }
+
+  //Set the escape character the user wants to use to send a command
+  else if (strcmp_P(commandArg, PSTR("esc")) == 0)
+  {
+    //Argument 1: The escape character to listen for
+    commandArg = getCmdArg(1);
+    if (commandArg == 0) return; //Argument missing. Command failed.
+
+    responseType = RESPONSE_STATUS;
+
+    setting_escape_character = strToLong(commandArg);
+    EEPROM.write(LOCATION_ESCAPE_CHAR, setting_escape_character);
+
+    newConfigData = true; //Tell the main loop to record the config.txt file
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    return;
+  }
+
+  //Set the number of escape characters before it triggers a command
+  else if (strcmp_P(commandArg, PSTR("num")) == 0)
+  {
+    //Argument 1: Number of escape characters before command parsing is triggered
+    commandArg = getCmdArg(1);
+    if (commandArg == 0) return; //Argument missing. Command failed.
+
+    responseType = RESPONSE_STATUS;
+
+    setting_max_escape_character = strToLong(commandArg);
+    EEPROM.write(LOCATION_MAX_ESCAPE_CHAR, setting_max_escape_character);
+
+    newConfigData = true; //Tell the main loop to record the config.txt file
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    return;
+  }
+
+  //Set the I2C address of this device
+  else if (strcmp_P(commandArg, PSTR("adr")) == 0)
+  {
+    //Argument 1: I2C address to listen to
+    commandArg = getCmdArg(1);
+    if (commandArg == 0) return; //Argument missing. Command failed.
+
+    responseType = RESPONSE_STATUS;
+
+    setting_i2c_address = strToLong(commandArg);
+
+    //Error check
+    if (setting_i2c_address < 0x08 || setting_i2c_address > 0x77)
+      return; //Command failed. This address is out of bounds.
+
+    EEPROM.write(LOCATION_I2C_ADDRESS, setting_i2c_address);
+
+    newConfigData = true; //Tell the main loop to record the config.txt file
+    
+    //Our I2C address may have changed because of user's command
+    startI2C(); //Determine the I2C address we should be using and begin listening on I2C bus
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    return;
+  }
+
+  //Set the log number to use when logging in New Log mode
+  else if (strcmp_P(commandArg, PSTR("log")) == 0)
+  {
+    responseType = RESPONSE_STATUS;
+
+    //If there is no argument then reset log number to 0
+    int32_t logNumber = 0;
+
+    //Argument 1 (optional): Two byte number to start from
+    commandArg = getCmdArg(1);
+    if (commandArg != 0) //We have a log number to store
+    {
+      logNumber = strToLong(commandArg) & 0xFFFF;
+    }
+
+    //Commit this number to EEPROM
+    EEPROM.write(LOCATION_FILE_NUMBER_LSB, (logNumber & 0xFF));
+    EEPROM.write(LOCATION_FILE_NUMBER_MSB, (logNumber & 0xFF00) >> 8);
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    return;
+  }
+
+  //Query OpenLog for its current settings
+  else if (strcmp_P(commandArg, PSTR("get")) == 0)
+  {
+    //Argument 1: Setting the user wants to look up
+    commandArg = getCmdArg(1);
+    if (commandArg == 0) return; //Argument missing. Command failed.
+
+    responseType = RESPONSE_VALUE; //Respond with the setting value
+
+    if (strcmp_P(commandArg, PSTR("set")) == 0)
+    {
+      loadArray(setting_system_mode);
+    }
+    else if (strcmp_P(commandArg, PSTR("adr")) == 0)
+    {
+      loadArray(setting_i2c_address);
+    }
+    else if (strcmp_P(commandArg, PSTR("esc")) == 0)
+    {
+      loadArray(setting_escape_character);
+    }
+    else if (strcmp_P(commandArg, PSTR("num")) == 0)
+    {
+      loadArray(setting_max_escape_character);
+    }
+    else if (strcmp_P(commandArg, PSTR("log")) == 0)
+    {
+      //Combine two 8-bit EEPROM spots into one 16-bit number
+      uint16_t newFileNumber = (EEPROM.read(LOCATION_FILE_NUMBER_MSB) << 8) | EEPROM.read(LOCATION_FILE_NUMBER_LSB);
+      loadArray(newFileNumber);
+    }
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    return;
+  }
+
+  //Tell OpenLog to reset to factory defaults
+  //Defaults: Normal logging, address to 42, escape to 26, escape num to 3, log number to zero
+  //Begin logging with the first log number available
+  else if (strcmp_P(commandArg, PSTR("default")) == 0)
+  {
+    responseType = RESPONSE_STATUS;
+
+    setDefaultSettings(); //Set EEPROM to safe settings
+
+    setting_system_mode = MODE_NEWLOG; //By default, unit will turn on and go to new file logging
+    setting_escape_character = 26; //Reset escape character to ctrl+z
+    setting_max_escape_character = 3; //Reset number of escape characters to 3
+    setting_i2c_address = 42; //By default, we listen for 42
+
+    EEPROM.write(LOCATION_FILE_NUMBER_LSB, 0); //Reset log number to 0
+    EEPROM.write(LOCATION_FILE_NUMBER_MSB, 0);
+
+    //Our I2C address may have changed because of user's command
+    startI2C(); //Determine the I2C address we should be using and begin listening on I2C bus
+
+    newConfigData = true; //Tell the main loop to record the config.txt file
+
+    //Close any previous file
+    if (workingFile.isOpen()) workingFile.close();
+
+    //Begin logging with the first log number available
+    appendFile(newLog()); //Append data to the file name that newlog() returns
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
     return;
   }
 
@@ -90,18 +258,14 @@ void commandShell()
       strupr(commandArg); //Convert to uppercase
     }
 
-    // Display listing with limited recursion into subdirectories
-    //lsPrint(sd.vwd(), commandArg, LS_SIZE | LS_R, 0); //Size and recursion
-    //lsPrint(sd.vwd(), commandArg, 0, 0); //No size, no recursion
-
     fileListArguments = commandArg; //We have to remember what to search for between I2C interrupts
 
-    sd.vwd()->rewind();
-    
+    sd.vwd()->rewind(); //Reset our location in the directory listing to the start
+
     //Load the responseBuffer with first file or directory name
     loadArrayWithFileName(sd.vwd(), commandArg);
 
-    systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
     return;
   }
 
@@ -115,7 +279,7 @@ void commandShell()
 
     if (sd.mkdir(commandArg) == true) //Make a directory in our current folder
     {
-      systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+      systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
     }
 
     return;
@@ -143,15 +307,15 @@ void commandShell()
         tempStatus = tempFile.rmRfStar();
         tempFile.close();
       }
-      if(tempStatus == true)
+      if (tempStatus == true)
       {
-        systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+        systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
         loadArray((long)1); //Success!
       }
       else
       {
-        systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
-        loadArray((long)-1); //Fail
+        systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+        loadArray((long) - 1); //Fail
       }
 
       return;
@@ -171,15 +335,15 @@ void commandShell()
       }
       tempFile.close();
 
-      if(tempStatus == true)
+      if (tempStatus == true)
       {
-        systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+        systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
         loadArray((long)1); //Success!
       }
       else
       {
-        systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
-        loadArray((long)-1); //Fail
+        systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+        loadArray((long) - 1); //Fail
       }
 
       return;
@@ -215,7 +379,7 @@ void commandShell()
     }
 
     loadArray(filesDeleted);
-    systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
     return;
   }
 
@@ -234,14 +398,14 @@ void commandShell()
       //TODO store the parent directory name and change to that instead
       if (sd.chdir("/")) //Change to root
       {
-        systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
-        systemStatus |= (1<<STATUS_IN_ROOT_DIRECTORY);
+        systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+        systemStatus |= (1 << STATUS_IN_ROOT_DIRECTORY);
         return;
       }
       else
       {
-        systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command failed
-        systemStatus &= ~(1<<STATUS_IN_ROOT_DIRECTORY); //It is unknown what directory we are in
+        systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command failed
+        systemStatus &= ~(1 << STATUS_IN_ROOT_DIRECTORY); //It is unknown what directory we are in
         return;
       }
     }
@@ -250,14 +414,14 @@ void commandShell()
       //User is trying to change to a named subdirectory
       if (sd.chdir(commandArg))
       {
-        systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
-        systemStatus &= ~(1<<STATUS_IN_ROOT_DIRECTORY); //We are no longer in root
+        systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+        systemStatus &= ~(1 << STATUS_IN_ROOT_DIRECTORY); //We are no longer in root
         return;
       }
       else
       {
-        systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command failed
-        systemStatus &= ~(1<<STATUS_IN_ROOT_DIRECTORY); //It is unknown what directory we are in
+        systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command failed
+        systemStatus &= ~(1 << STATUS_IN_ROOT_DIRECTORY); //It is unknown what directory we are in
         return;
       }
     }
@@ -279,8 +443,8 @@ void commandShell()
     if (workingFile.open(commandArg, O_READ) == false)
     {
       //Failed to open file
-      systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command failed
-      systemStatus &= ~(1<<STATUS_FILE_OPEN); //File not open
+      systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command failed
+      systemStatus &= ~(1 << STATUS_FILE_OPEN); //File not open
 
       //File is not open so clear buffer.
       responseSize = 1;
@@ -298,8 +462,8 @@ void commandShell()
           //NewSerial.println(commandArg);
           workingFile.close();
 
-          systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command failed
-          systemStatus &= ~(1<<STATUS_FILE_OPEN); //File not open
+          systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command failed
+          systemStatus &= ~(1 << STATUS_FILE_OPEN); //File not open
 
           //File is not open so clear buffer.
           responseSize = 1;
@@ -313,72 +477,10 @@ void commandShell()
     //Load the responseBuffer with up to 32 bytes from the file contents
     loadArrayWithFile();
 
-    systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command succeeded
-    systemStatus |= (1<<STATUS_FILE_OPEN); //File open
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command succeeded
+    systemStatus |= (1 << STATUS_FILE_OPEN); //File open
     return;
   }
-
-  //Let's remove write. User can new and/or append
-  /*else if (strcmp_P(commandArg, PSTR("write")) == 0)
-    {
-    //Argument 1: File name
-    commandArg = getCmdArg(1);
-    if (commandArg == 0)
-      continue;
-
-    //search file in current directory and open it
-    if (!tempFile.open(commandArg, O_WRITE)) {
-      //NewSerial.print(F("Failed to open file "));
-      //NewSerial.println(commandArg);
-      continue;
-    }
-
-    //Argument 2: File seek position
-    if ((commandArg = getCmdArg(2)) != 0) {
-      if ((commandArg = isNumber(commandArg, strlen(commandArg))) != 0) {
-        int32_t offset = strToLong(commandArg);
-        if (!tempFile.seekSet(offset)) {
-          NewSerial.print(F("Error seeking to "));
-          NewSerial.println(commandArg);
-          tempFile.close();
-          continue;
-        }
-      }
-    }
-
-    //read text from the shell and write it to the file
-    byte dataLen;
-    while (1) {
-      NewSerial.print(F("<")); //give a different prompt
-
-      //read one line of text
-      dataLen = readLine(buffer, sizeof(buffer));
-      if (!dataLen) {
-        systemStatus = 1;
-        break;
-      }
-
-      //If we see the escape character at the end of the buffer then record up to
-      //that point in the buffer excluding the escape char
-      //See issue 168: https://github.com/sparkfun/OpenLog/issues/168
-      //if(buffer[dataLen] == setting_escape_character)
-      //{
-      //  //dataLen -= 1; //Adjust dataLen to remove the escape char
-      //  tempFile.write((byte*) buffer, dataLen); //write text to file
-      //  break; //Quit recording to file
-      //}
-
-      //write text to file
-      if (tempFile.write((byte*) buffer, dataLen) != dataLen) {
-        //NewSerial.println(F("error writing to file"));
-        break;
-      }
-
-      if (dataLen < (sizeof(buffer) - 1)) tempFile.write("\n\r", 2); //If we didn't fill up the buffer then user must have sent NL. Append new line and return
-    }
-
-    tempFile.close();
-    }*/
 
   //Get the size of a given file
   //Always returns four bytes. -1 on failure
@@ -395,14 +497,27 @@ void commandShell()
       loadArray(tempFile.fileSize()); //Put this data in the I2C response buffer
       tempFile.close();
 
-      systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command success
+      systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command success
     }
     else
     {
       //Indicate no file is found
       loadArray((long) - 1); //Put this data in the I2C response buffer
-      systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command failed
+      systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command failed
     }
+
+    return;
+  }
+
+  //Get the current firmware version. Always returns two bytes.
+  else if (strcmp_P(commandArg, PSTR("ver")) == 0)
+  {
+    responseType = RESPONSE_VALUE;
+
+    unsigned int OpenLogVersion = versionMajor << 8 | versionMinor;
+
+    loadArray(OpenLogVersion);
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command success
 
     return;
   }
@@ -430,8 +545,8 @@ void commandShell()
       tempFile.close(); //Everything is good, Close this new file we just opened
     }
 
-    systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command success
-    
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command success
+
     return;
   }
 
@@ -448,21 +563,21 @@ void commandShell()
 
     //Point workingFile at this new file name
     //appendFile() closes any currently open file
-    if(appendFile(commandArg) == true)
+    if (appendFile(commandArg) == true)
     {
-      systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Command success
-      systemStatus |= (1<<STATUS_FILE_OPEN); //Set status bit
+      systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command success
+      systemStatus |= (1 << STATUS_FILE_OPEN); //Set status bit
     }
     else
     {
-      systemStatus &= ~(1<<STATUS_LAST_COMMAND_SUCCESS); //Command fail
-      systemStatus &= ~(1<<STATUS_FILE_OPEN); //Clear status bit
+      systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Command fail
+      systemStatus &= ~(1 << STATUS_FILE_OPEN); //Clear status bit
     }
-    
+
     return;
   }
 
-  systemStatus &= ~(1<<STATUS_LAST_COMMAND_KNOWN); //Clear bit. We don't know what this command is.
+  systemStatus &= ~(1 << STATUS_LAST_COMMAND_KNOWN); //Clear bit. We don't know what this command is.
 
   NewSerial.print(F("unknown command: "));
   NewSerial.println(commandArg);
@@ -492,6 +607,14 @@ void loadArray(int myNumber)
 }
 
 void loadArray(unsigned int myNumber)
+{
+  for (byte x = 0 ; x < sizeof(myNumber) ; x++)
+    responseBuffer[x] = (myNumber >> (((sizeof(myNumber) - 1) - x) * 8)) & 0xFF;
+  responseSize = sizeof(myNumber);
+}
+
+//Loads an byte into the start of the responseBuffer
+void loadArray(byte myNumber)
 {
   for (byte x = 0 ; x < sizeof(myNumber) ; x++)
     responseBuffer[x] = (myNumber >> (((sizeof(myNumber) - 1) - x) * 8)) & 0xFF;
@@ -529,7 +652,7 @@ void loadArrayWithFile(void)
 }
 
 //A rudimentary way to convert a string to a long 32 bit integer
-//Used by the read command, in command shell and baud from the system menu
+//Used by the read command, in command shell
 uint32_t strToLong(const char* str)
 {
   uint32_t l = 0;
@@ -625,11 +748,6 @@ char* isNumber(char* buffer, byte bufferLength)
 
   return buffer;
 }
-void removeErrorCallback(const char* fileName)
-{
-  NewSerial.print((char *)F("Remove failed: "));
-  NewSerial.println(fileName);
-}
 
 //Wildcard string compare.
 //Written by Jack Handy - jakkhandy@hotmail.com
@@ -720,13 +838,13 @@ void loadArrayWithFileName(FatFile * theDir, char * cmdStr)
 
   //Hack to print rBuffer
   /*String temp = "";
-  for (int x = 0 ; x < 15 ; x++)
-  {
+    for (int x = 0 ; x < 15 ; x++)
+    {
     temp += (char)responseBuffer[x];
     if (responseBuffer[x] == '\0') break;
-  }
-  NewSerial.println(temp);*/
-  
+    }
+    NewSerial.println(temp);*/
+
   tempFile.close();
   return;
 }

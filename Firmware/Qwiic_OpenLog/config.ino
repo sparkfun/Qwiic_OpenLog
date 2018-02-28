@@ -4,7 +4,7 @@
 
 #define CFG_FILENAME "config.txt" //This is the name of the file that contains the unit settings
 
-#define MAX_CFG "119,103,14,0\n" //Address 119, escape char of ASCII(103), 14 times, new log mode
+#define MAX_CFG "119,103,14,0" //Address 119, escape char of ASCII(103), 14 times, new log mode
 #define CFG_LENGTH (strlen(MAX_CFG) + 1) //Length of text found in config file. strlen ignores \0 so we have to add it back 
 #define SEQ_FILENAME "SEQLOG00.TXT" //This is the name for the file when you're in sequential modeu
 
@@ -18,78 +18,6 @@
 
 #define MODE_NEWLOG     0
 #define MODE_SEQLOG     1
-#define MODE_COMMAND    2
-
-//Change how OpenLog works
-//1) Turn on unit, unit will create new file, and just start logging
-//2) Turn on, append to known file, and just start logging
-//3) Turn on, sit at command prompt
-//4) Resets the newLog file number to zero
-void systemMenu(byte command)
-{
-  byte systemMode = EEPROM.read(LOCATION_SYSTEM_SETTING);
-
-  /*    NewSerial.println(F("1) New file logging"));
-      NewSerial.println(F("2) Append file logging"));
-      NewSerial.println(F("3) Command prompt"));
-      NewSerial.println(F("4) Reset new file number"));
-  */
-
-  //Execute command
-  if (command == '1')
-  {
-    EEPROM.write(LOCATION_SYSTEM_SETTING, MODE_NEWLOG);
-    recordConfigFile(); //Put this new setting into the config file
-  }
-  else if (command == '2')
-  {
-    EEPROM.write(LOCATION_SYSTEM_SETTING, MODE_SEQLOG);
-    recordConfigFile(); //Put this new setting into the config file
-  }
-  else if (command == '3')
-  {
-    EEPROM.write(LOCATION_SYSTEM_SETTING, MODE_COMMAND);
-    recordConfigFile(); //Put this new setting into the config file
-    return;
-  }
-  else if (command == '4')
-  {
-    EEPROM.write(LOCATION_FILE_NUMBER_LSB, 0);
-    EEPROM.write(LOCATION_FILE_NUMBER_MSB, 0);
-
-  }
-  else if (command == '5')
-  {
-    NewSerial.print(F("Enter a new escape character: "));
-
-    while (!NewSerial.available()); //Wait for user to hit character
-    setting_escape_character = NewSerial.read();
-
-    EEPROM.write(LOCATION_ESCAPE_CHAR, setting_escape_character);
-    recordConfigFile(); //Put this new setting into the config file
-
-    NewSerial.print(F("\n\rNew escape character: "));
-    NewSerial.println(setting_escape_character, DEC);
-  }
-  else if (command == '6')
-  {
-    byte choice = 255;
-    while (choice == 255)
-    {
-      NewSerial.print(F("\n\rEnter number of escape characters to look for (0 to 254): "));
-      while (!NewSerial.available()); //Wait for user to hit character
-      choice = NewSerial.read() - '0';
-    }
-
-    setting_max_escape_character = choice;
-    EEPROM.write(LOCATION_MAX_ESCAPE_CHAR, setting_max_escape_character);
-    recordConfigFile(); //Put this new setting into the config file
-
-    NewSerial.print(F("\n\rNumber of escape characters needed: "));
-    NewSerial.println(setting_max_escape_character, DEC);
-  }
-}
-
 
 //Resets all the system settings to safe values
 void setDefaultSettings(void)
@@ -245,7 +173,7 @@ void readConfigFile(void)
     else if (setting_number == 3) //System mode
     {
       new_system_mode = new_setting_int;
-      if (new_system_mode == 0 || new_system_mode > MODE_COMMAND) new_system_mode = MODE_NEWLOG; //Default is NEWLOG
+      if (new_system_mode == 0 || new_system_mode > MODE_SEQLOG) new_system_mode = MODE_NEWLOG; //Default is NEWLOG
     }
     else
       //We're done! Stop looking for settings
@@ -316,7 +244,7 @@ void recordConfigFile(void)
 {
   SdFile myFile;
 
-  if (!sd.chdir()) systemError(ERROR_ROOT_INIT); // open the root directory
+  if (!sd.chdir()) systemError(ERROR_ROOT_INIT); //Open the root directory
 
   char configFileName[strlen(CFG_FILENAME)];
   strcpy_P(configFileName, PSTR(CFG_FILENAME)); //This is the name of the config file. 'config.sys' is probably a bad idea.
@@ -329,8 +257,6 @@ void recordConfigFile(void)
       return;
     }
   }
-
-  //myFile.close(); //Not sure if we need to close the file before we try to reopen it
 
   //Create config file
   myFile.open(configFileName, O_CREAT | O_APPEND | O_WRITE);
@@ -346,22 +272,21 @@ void recordConfigFile(void)
   byte current_system_mode = EEPROM.read(LOCATION_SYSTEM_SETTING);
 
   //Convert system settings to visible ASCII characters
-  sprintf_P(settings_string, PSTR("%d,%d,%d,%d\n"), current_system_i2c_address, current_system_escape, current_system_max_escape, current_system_mode);
+  sprintf_P(settings_string, PSTR("%d,%d,%d,%d"), current_system_i2c_address, current_system_escape, current_system_max_escape, current_system_mode);
 
   //Record current system settings to the config file
   if (myFile.write(settings_string, strlen(settings_string)) != strlen(settings_string))
-    NewSerial.println(F("error writing to file"));
+    NewSerial.println(F("Error writing to file"));
 
-  myFile.println(); //Add a break between lines
-
+  myFile.println();
+  
   //Add a decoder line to the file
 #define HELP_STR "i2c_address,escape,esc#,mode\n"
   char helperString[strlen(HELP_STR) + 1]; //strlen is preprocessed but returns one less because it ignores the \0
   strcpy_P(helperString, PSTR(HELP_STR));
   myFile.write(helperString); //Add this string to the file
 
-  myFile.sync(); //Sync all newly written data to card
-  myFile.close(); //Close this file
+  myFile.close(); //Close this file causing it to sync
   //Now that the new config file has the current system settings, nothing else to do!
 }
 

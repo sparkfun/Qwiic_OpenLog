@@ -19,7 +19,7 @@
   Bit 5: 0 - Future Use
   Bit 6: 0 - Future Use
   Bit 7: 0 - Future Use
-  
+
   NewSerial uses approximately 60 bytes less RAM than built-in Serial so we use NewSerial library.
 
   At 115200bps with OpenLog Serial, it logged 11,520 bytes per second with a few buffer overruns
@@ -27,6 +27,10 @@
   At 400kHz, that's 40,000 bytes per second. We're going to need clock stretching.
 
   Red LED is 1.8V forward voltage. 3.3V - 1.8V = 1.5V across 1k = 1.5mA for the "PWR" LED
+
+  3.5mA during idle
+  12mA during constant write
+  2.85mA idle, no card
 
   What are the options we could set over I2C?
   Set escape character
@@ -59,10 +63,11 @@
   "append test.txt" - Create (if not exist) and append to file 'test.txt'
   "md day2" - Make directory day2
   "cd day2" - Change directory to day2
-  (future) "set <recording type>" - Set recording type. 0 = Create new log each power up, 1 = Append to SeqLog
-  (future) "adr <i2c address>" - Change I2C address. Valid/allowed addresses are 0x08 to 0x77.
-  (future) "esc <byte>" - Change escape character. Valid 0x01 to 0xFE.
-  (future) "num <byte>" - Change number of escape characters. Valid 0x00 to 0xFF
+  "set <recording type>" - Set recording type. 0 = Create new log each power up, 1 = Append to SeqLog
+  "adr <i2c address>" - Change I2C address. Valid/allowed addresses are 0x08 to 0x77.
+  "esc <byte>" - Change escape character. Valid 0x01 to 0xFE.
+  "num <byte>" - Change number of escape characters. Valid 0x00 to 0xFF
+  "log <number to start at>" - Change number of log to start with Valid 0x0000 to 0xFFFE
   If the master issues a read after these commands are sent, QOL responds with systemStatus byte
 
   "ls" - List files and subdirectories in current directory
@@ -79,27 +84,30 @@
   If the master issues a read after this command, QOL responds with up to 32 bytes of file contents
   Used size command prior to read to determine the number of bytes to read.
 
-  (future) "get <setting>" - status = 1 if success
-  if the master issues a read after this command, QOL responds with the adr, esc, num, or set value
+  "get <setting>" - Get the value of a setting
+  If the master issues a read after this command, QOL responds with the adr, esc, num, or set value
 
-  (future) "default" = 1 if success
-  reset to all factory settings
+  "default" - Reset to all factory settings
+  Normal logging, address to 42, escape to 26, escape num to 3, log number to zero.
+  Begin logging with the first log number available
 
-  (future) set time/date via timestamp and dateTimeCallback() function
+  (future) Set time/date via timestamp and dateTimeCallback() function
 
   6 = OpenLog
   8 = Master
 
   TODO:
   Power savings
-  ADR jumper
   Library
-  Check status byte
-  Add firmware version
+  See if increasing the buffer size(S) increases record from 21k to more
 
 */
 
 #include <Wire.h>
+
+//Set version numbers for this firmware
+const byte versionMajor = 1;
+const byte versionMinor = 0;
 
 #define __PROG_TYPES_COMPAT__ //Needed to get SerialPort.h to work in Arduino 1.6.x
 
@@ -143,9 +151,12 @@ void(* Reset_AVR) (void) = 0; //Way of resetting the ATmega
 const byte stat1 = 5;  //Used as a power indicator
 const byte stat2 = 13; //This is the SPI LED, indicating SD traffic
 
+//The I2C ADR jumper is on pin 3. Used to change the I2C address by decreasing it by 1.
+//Default I2C address is 0x2A. When jumper is closed address goes down by one to 0x29.
+const byte addr = 3;
+
 //Blinking LED error codes
 #define ERROR_SD_INIT   3
-#define ERROR_NEW_BAUD    5
 #define ERROR_CARD_INIT   6
 #define ERROR_VOLUME_INIT 7
 #define ERROR_ROOT_INIT   8
@@ -157,16 +168,16 @@ const byte stat2 = 13; //This is the SPI LED, indicating SD traffic
 SdFat sd;
 SdFile workingFile; //This is the main file we are writing to or reading from
 
-byte setting_i2c_address = 42; //The 7-bit I2C address of this OpenLog
-byte setting_system_mode; //This is the mode the system runs in, default is MODE_NEWLOG
-byte setting_escape_character; //This is the ASCII character we look for to break logging, default is ctrl+z
-byte setting_max_escape_character; //Number of escape chars before break logging, default is 3
-
 const unsigned int MAX_IDLE_TIME_MSEC = 500; //Max idle time before unit syncs buffer and goes to sleep
 
 //Variables used in the I2C interrupt
-#define BUFFER_SIZE 256
-byte incomingData[BUFFER_SIZE]; //Local buffer to record I2C bytes before committing to file
+volatile byte setting_i2c_address = 42; //The 7-bit I2C address of this OpenLog
+volatile byte setting_system_mode; //This is the mode the system runs in, default is MODE_NEWLOG
+volatile byte setting_escape_character; //This is the ASCII character we look for to break logging, default is ctrl+z
+volatile byte setting_max_escape_character; //Number of escape chars before break logging, default is 3
+
+#define LOCAL_BUFFER_SIZE 256
+byte incomingData[LOCAL_BUFFER_SIZE]; //Local buffer to record I2C bytes before committing to file
 volatile int incomingDataSpot = 0; //Keeps track of where we are in the incoming buffer
 volatile unsigned long lastSyncTime = 0; //Keeps track of the last time the file was synced
 volatile byte escapeCharsReceived = 0; //We must receive X number of escape chars before going into command mode
@@ -194,12 +205,14 @@ volatile byte systemStatus = 0; //This byte contains the following status bits
 
 char* fileListArguments; //When reading a list of files, we have to remember what to search for between I2C interrupts
 
-//Testing only
-volatile long toPrint1 = 0;
+volatile boolean newConfigData = false;
+
+volatile byte toPrint = 0; //For testing
 
 void setup(void)
 {
   pinMode(stat1, OUTPUT);
+  pinMode(addr, INPUT_PULLUP);
 
   //Power down various bits of hardware to lower power usage
   set_sleep_mode(SLEEP_MODE_IDLE);
@@ -221,7 +234,7 @@ void setup(void)
   //Begin listening on I2C only after we've setup all our config and opened any files
   Wire.onReceive(receiveEvent);
   Wire.onRequest(requestEvent);
-  Wire.begin(setting_i2c_address); //Start I2C and answer calls for this address
+  startI2C(); //Determine the I2C address we should be using and begin listening on I2C bus
 
   //Setup UART
   NewSerial.begin(9600);
@@ -230,23 +243,33 @@ void setup(void)
   //Setup SD & FAT
   if (sd.begin(SD_CHIP_SELECT, SPI_FULL_SPEED) == false)
   {
-    systemStatus &= ~(1<<STATUS_SD_INIT_GOOD); //Init failed
+    systemStatus &= ~(1 << STATUS_SD_INIT_GOOD); //Init failed
     systemError(ERROR_CARD_INIT);
   }
-  systemStatus |= (1<<STATUS_SD_INIT_GOOD); //Init success! 
+  systemStatus |= (1 << STATUS_SD_INIT_GOOD); //Init success!
 
   if (sd.chdir() == false) //Change to root directory. All new file creation will be in root.
   {
-    systemStatus &= ~(1<<STATUS_SD_INIT_GOOD); //Init failed
-    systemStatus &= ~(1<<STATUS_IN_ROOT_DIRECTORY); //Init failed
-    systemError(ERROR_ROOT_INIT); 
+    systemStatus &= ~(1 << STATUS_SD_INIT_GOOD); //Init failed
+    systemStatus &= ~(1 << STATUS_IN_ROOT_DIRECTORY); //Init failed
+    systemError(ERROR_ROOT_INIT);
   }
-  systemStatus |= (1<<STATUS_IN_ROOT_DIRECTORY); //We are in root
-  
+  systemStatus |= (1 << STATUS_IN_ROOT_DIRECTORY); //We are in root
+
   NewSerial.print(F("2"));
 
   //Search for a config file and load any settings found. This will over-ride previous EEPROM settings if found.
   readConfigFile();
+
+  //Our I2C address may have changed from the config file
+  startI2C(); //Determine the I2C address we should be using and begin listening on I2C bus
+
+  NewSerial.print(F("(Adr: "));
+  if (digitalRead(addr) == LOW)
+    NewSerial.print(0x29, DEC);
+  else
+    NewSerial.print(setting_i2c_address, DEC);
+  NewSerial.print(F(")"));
 
 #if DEBUG
   NewSerial.print(F("FreeStack: "));
@@ -259,35 +282,27 @@ void setup(void)
 
   sd.chdir("/"); //Change 'volume working directory' to root
 
-  systemStatus |= (1<<STATUS_LAST_COMMAND_SUCCESS); //Last command was success (start up default)
-  systemStatus |= (1<<STATUS_LAST_COMMAND_KNOWN); //Last command was known (start up default)
+  systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Last command was success (start up default)
+  systemStatus |= (1 << STATUS_LAST_COMMAND_KNOWN); //Last command was known (start up default)
 }
 
 void loop(void)
 {
-  //Start recording incoming characters
-
-  //The I2C receiveEvent() interrupt records all incoming bytes to workingFile
-  //If a command is detected in the I2C receiveEvent(), command shell is run. This allows for clock stretching
-  //while we do file manipulations.
-
-  if (toPrint1 != 0)
+  if (toPrint != 0)
   {
     NewSerial.print("toPrint: ");
-    NewSerial.println(toPrint1);
+    NewSerial.println(toPrint, DEC);
 
-    //NewSerial.println("fileList: ");
-    //String temp = (String)fileList;
-    //NewSerial.print(temp);
-    //NewSerial.println("Done");
-
-    toPrint1 = 0;
+    toPrint = 0;
   }
 
+  //The I2C receiveEvent() interrupt records all incoming bytes to workingFile
+
+  //If an amount of time passes, put OpenLog into low power mode
   if ( (millis() - lastSyncTime) > MAX_IDLE_TIME_MSEC) { //If we haven't received any characters after amount of time, goto sleep
 
     noInterrupts(); //Disable I2C interrupt
-    if(workingFile.isOpen())
+    if (workingFile.isOpen())
     {
       if (incomingDataSpot > 0)
       {
@@ -302,18 +317,29 @@ void loop(void)
 
     power_timer0_disable(); //Shut down peripherals we don't need
     power_spi_disable();
-    //sleep_mode(); //Stop everything and go to sleep. Wake up if serial character received
+    power_usart0_disable();
+    sleep_mode(); //Stop everything and go to sleep. Wake up if I2C event occurs.
 
     power_spi_enable(); //After wake up, power up peripherals
     power_timer0_enable();
+    power_usart0_enable();
 
     lastSyncTime = millis(); //Reset the last sync time to now
+  }
+
+  //Check to see if we need to commit the current EEPROM settings to a file
+  //OpenLog likes to crash if we try to do this in the command shell (which is inside the interrupt)
+  if (newConfigData == true)
+  {
+    recordConfigFile(); //Put this new setting into the config file
+    newConfigData = false;
   }
 }
 
 //When OpenLog receives data bytes, this function is called as an interrupt
 //Arduino [Uno] buffer is limited to 32 bytes so we pull data into a second local buffer that is larger
-//We also scan for control characters. If we detect enough of them, we have received a command
+//We also scan for control characters. If we detect enough of them, we have received a command.
+//If a command is detected the command shell is run. This allows for clock stretching while we do file manipulations.
 void receiveEvent(int numberOfBytesReceived)
 {
   while (Wire.available())
@@ -354,10 +380,10 @@ void receiveEvent(int numberOfBytesReceived)
 
     incomingDataSpot++;
 
-    if (incomingDataSpot == BUFFER_SIZE)
+    if (incomingDataSpot == LOCAL_BUFFER_SIZE)
     {
       //Record buffer to file
-      workingFile.write(incomingData, BUFFER_SIZE);
+      workingFile.write(incomingData, LOCAL_BUFFER_SIZE);
       incomingDataSpot = 0;
       escapeCharsReceived = 0;
       lastSyncTime = millis();
@@ -376,6 +402,10 @@ void requestEvent()
     case RESPONSE_STATUS:
       //Respond with the system status byte
       Wire.write(systemStatus);
+
+      //Once read, clear the last command known and last command success bits
+      systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS);
+      systemStatus &= ~(1 << STATUS_LAST_COMMAND_KNOWN);
       break;
 
     case RESPONSE_VALUE:
@@ -448,5 +478,15 @@ void blink_error(byte ERROR_TYPE)
 
     delay(2000);
   }
+}
+
+//Begin listening on I2C bus as I2C slave using the global variable setting_i2c_address
+void startI2C()
+{
+  Wire.end();
+  if (digitalRead(addr) == LOW)
+    Wire.begin(0x29); //Force address to 0x29 if user has soldered jumper closed
+  else
+    Wire.begin(setting_i2c_address); //Start I2C and answer calls using address from EEPROM
 }
 

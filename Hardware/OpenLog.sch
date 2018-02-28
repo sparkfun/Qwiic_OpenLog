@@ -9315,8 +9315,8 @@ The boot header is meant for Serial Basic connection for programming.</text>
 <wire x1="0" y1="114.3" x2="147.32" y2="114.3" width="0.2032" layer="97" style="shortdash"/>
 <wire x1="81.28" y1="185.42" x2="81.28" y2="35.56" width="0.2032" layer="97" style="shortdash"/>
 <text x="180.34" y="53.34" size="1.778" layer="97">7-Bit I2C Address Jumper</text>
-<text x="182.88" y="48.26" size="1.778" layer="97">Closed = 0x43</text>
-<text x="182.88" y="50.8" size="1.778" layer="97">Open (default) = 0x42</text>
+<text x="182.88" y="48.26" size="1.778" layer="97">Closed = 0x29</text>
+<text x="182.88" y="50.8" size="1.778" layer="97">Open (default) = 0x2A</text>
 </plain>
 <instances>
 <instance part="FRAME1" gate="G$1" x="0" y="0"/>

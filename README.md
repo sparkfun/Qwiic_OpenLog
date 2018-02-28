@@ -12,11 +12,16 @@ The [Qwiic](https://www.sparkfun.com/qwiic) system makes it easy to read all sor
 
 And your data will be recorded to LOG00001.TXT for later review. 
 
-The SparkFun Qwiic OpenLog is the smarter, better looking cousin to the extremely popular [OpenLog](https://www.sparkfun.com/products/13712). We've ported the serial based interface to I2C. Now you can daisy-chain lots of I2C devices and log them all without taking up your serial port.
+The SparkFun Qwiic OpenLog is the smarter and better looking cousin to the extremely popular [OpenLog](https://www.sparkfun.com/products/13712). We've ported the serial based interface to I2C. Now you can daisy chain lots of I2C devices and log them all without taking up your serial port.
+
+We've written a large number of example sketches to show how to record logs, create new logs, create and navigate directories, remove files and directories, and read the contents of files. 
 
 Qwiic OpenLog supports clock stretching which means it performs even better than the original! Qwiic OpenLog will record data up to 21,000 bytes per second at 400kHz. As the receive buffer fills up QOL will hold the clock line letting the master know that it is busy. Once QOL is finished with a task it releases the clock allowing the data to continue flowing without corruption.
 
-We've written a large number of example sketches to show how to record logs, create new logs, create and navigate directories, remove files and directories, and read the contents of files. We will be adding more features to the firmware over time and we've made it very easy to upgrade! If you're comfortable sending a sketch to an Uno then you can upgrade the firmware on Qwiic OpenLog.
+Need to get freaky and have multiple data loggers on the same bus? You're in luck. Qwiic OpenLog has both a solder jumper to allow for two devices on the same bus as well as a software setting to allow for the setting of any I2C address. Don't get too freaky though; the limit is 111 devices (0x08 to 0x77) on the same bus. Any microSD card will work so with 64GB cards you'll be limited to approximately 7 Terabytes of storage :(
+
+We will be adding more features to the firmware over time and we've made it very easy to upgrade! If you're comfortable sending a sketch to an Uno then you can upgrade the firmware on Qwiic OpenLog.
+
 
 Repository Contents
 -------------------
