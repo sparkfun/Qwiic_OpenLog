@@ -6,9 +6,9 @@
   License: This code is public domain but you buy me a beer if you use this and we meet someday (Beerware license).
 
   Feel like supporting our work? Buy a board from SparkFun!
-  https://www.sparkfun.com/products/14586
+  https://www.sparkfun.com/products/14641
 
-  Qwiic OpenLog records any incoming byte to the default log file. If quered by the master it will
+  Qwiic OpenLog records any incoming byte to the default log file. If quered by the master OpenLog will
   normally respond with a status byte with the following structure:
 
   Bit 0: SD/Init Good
@@ -20,8 +20,6 @@
   Bit 6: 0 - Future Use
   Bit 7: 0 - Future Use
 
-  NewSerial uses approximately 60 bytes less RAM than built-in Serial so we use NewSerial library.
-
   At 115200bps with OpenLog Serial, it logged 11,520 bytes per second with a few buffer overruns
   At 100kHz I2C that's 10,000 bytes per second (10-bits per byte in I2C). Should be ok.
   At 400kHz, that's 40,000 bytes per second. We're going to need clock stretching.
@@ -32,42 +30,21 @@
   12mA during constant write
   2.85mA idle, no card
 
-  What are the options we could set over I2C?
-  Set escape character
-  Set number of escape characters
-  New file logging vs append logging
-  Reset file number
+  Why do we use NewSerial? NewSerial uses approximately 60 bytes less RAM than built-in Serial.
 
-  Need to check status byte from examples to see if OpenLog has SD card and is online
-
-  (done) list files
-  (done) make directory
-  remove directory
-  (done) change dir
-  (done) read file
-  (done) write to file
-  (done) append
-  (done) new
-  (no) echo
-  (done) size
-  (no) disk
-  reset
-
-  Working! Records great 110k at 400kHz. Clock stretches correctly.
+  Recording works great at 400kHz. Clock stretches correctly.
   The clock stretch occurs every 36ms, curious... Probably happening every 512 byte write
-
-  Write example that scans for I2C devices to find lost OpenLog
 
   Commands look like this:
   "new test.txt" - Create file 'test.txt' in current directory
   "append test.txt" - Create (if not exist) and append to file 'test.txt'
   "md day2" - Make directory day2
   "cd day2" - Change directory to day2
-  "set <recording type>" - Set recording type. 0 = Create new log each power up, 1 = Append to SeqLog
-  "adr <i2c address>" - Change I2C address. Valid/allowed addresses are 0x08 to 0x77.
-  "esc <byte>" - Change escape character. Valid 0x01 to 0xFE.
-  "num <byte>" - Change number of escape characters. Valid 0x00 to 0xFF
-  "log <number to start at>" - Change number of log to start with Valid 0x0000 to 0xFFFE
+  "set 1" - Set recording type to SeqLog. 0 = Create new log each power up, 1 = Append to SeqLog
+  "adr 98" - Change I2C address to 98. Valid/allowed addresses are 0x08 to 0x77.
+  "esc 36" - Change escape character tp $. Valid 0 to 255
+  "num 5" - Change number of escape characters to 5. Valid 0 to 255
+  "log 100" - Change number of log to start at LOG00100.TXT. Valid 0 to 65,534
   If the master issues a read after these commands are sent, QOL responds with systemStatus byte
 
   "ls" - List files and subdirectories in current directory
@@ -76,6 +53,10 @@
   If the master issues a read after this command, QOL responds with /0 terminated string of object.
   Each subsequent read gets another object.
   Directory names end in / character.
+  
+  "rm LOG*.TXT" - Remove all files that have the name LOG?????.TXT.
+  "rm MONDAY" - Remove the *empty* directory MONDAY
+  "rm -rf MONDAY" - Remove the directory MONDAY and any files within it
 
   "size <file>" - Get size of file. -1 if file does not exist
   If the master issues a read after this command, QOL responds with 4 bytes, signed long of file size
@@ -93,14 +74,10 @@
 
   (future) Set time/date via timestamp and dateTimeCallback() function
 
-  6 = OpenLog
-  8 = Master
-
   TODO:
-  Power savings
   Library
   See if increasing the buffer size(S) increases record from 21k to more
-
+  Write example that scans for I2C devices to find lost OpenLog
 */
 
 #include <Wire.h>

@@ -1,7 +1,7 @@
 SparkFun Qwiic OpenLog
 ========================================
 
-![SparkFun Qwiic OpenLog](https://cdn.sparkfun.com//assets/parts/1/2/7/3/3/14586-VR_IMU__Qwiic__-_BNO080-01.jpg)
+![SparkFun Qwiic OpenLog](https://cdn.sparkfun.com//assets/parts/1/2/8/2/4/14641-Qwiic_OpenLog_03.jpg)
 
 [*SparkX Qwiic OpenLog (SPX-14641)*](https://www.sparkfun.com/products/14641)
 
