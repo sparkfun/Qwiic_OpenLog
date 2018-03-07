@@ -78,6 +78,10 @@
   Library
   See if increasing the buffer size(S) increases record from 21k to more
   Write example that scans for I2C devices to find lost OpenLog
+  get file count command - number of files in this directory
+  get directory count command - number of directories in this directory
+  add command to force sync. Sometimes card is pulled before 500ms?
+  When SD card is out, does OpenLog hang the I2C bus?
 */
 
 #include <Wire.h>
@@ -184,8 +188,6 @@ char* fileListArguments; //When reading a list of files, we have to remember wha
 
 volatile boolean newConfigData = false;
 
-volatile byte toPrint = 0; //For testing
-
 void setup(void)
 {
   pinMode(stat1, OUTPUT);
@@ -195,13 +197,12 @@ void setup(void)
   set_sleep_mode(SLEEP_MODE_IDLE);
   sleep_enable();
 
-  //Shut off TWI, Timer2, Timer1, ADC
+  //Shut off Timer2, Timer1, ADC
   ADCSRA &= ~(1 << ADEN); //Disable ADC
   ACSR = (1 << ACD); //Disable the analog comparator
   DIDR0 = 0x3F; //Disable digital input buffers on all ADC0-ADC5 pins
   DIDR1 = (1 << AIN1D) | (1 << AIN0D); //Disable digital input buffer on AIN1/0
 
-  //power_twi_disable();
   power_timer1_disable();
   power_timer2_disable();
   power_adc_disable();
@@ -265,14 +266,6 @@ void setup(void)
 
 void loop(void)
 {
-  if (toPrint != 0)
-  {
-    NewSerial.print("toPrint: ");
-    NewSerial.println(toPrint, DEC);
-
-    toPrint = 0;
-  }
-
   //The I2C receiveEvent() interrupt records all incoming bytes to workingFile
 
   //If an amount of time passes, put OpenLog into low power mode
@@ -387,8 +380,9 @@ void requestEvent()
 
     case RESPONSE_VALUE:
       //File size, number of files removed, etc. May be 1, 2, or 4 bytes depending on what loads it
-      //Respond with a 4 byte signed long indicating size of this file
       Wire.write(responseBuffer, responseSize);
+
+      responseType = RESPONSE_STATUS; //Return to default state
       break;
 
     case RESPONSE_FILE_READ:
@@ -408,7 +402,7 @@ void requestEvent()
       break;
 
     default:
-      Wire.write(0xF0); //Unknown response state
+      Wire.write(0x80); //Unknown response state
       break;
   }
 }

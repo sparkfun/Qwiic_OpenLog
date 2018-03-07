@@ -63,6 +63,18 @@ void commandShell()
     return;
   }
 
+  //Respond with the current status byte
+  else if (strcmp_P(commandArg, PSTR("stat")) == 0)
+  {
+    //Stop any other command and go to default response
+    responseSize = 1;
+    responseBuffer[0] = 0xFF;
+    responseType = RESPONSE_STATUS;
+
+    systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command successful. Set status bit.
+    return;
+  }
+
   //Set which type of logging the user wants
   else if (strcmp_P(commandArg, PSTR("set")) == 0)
   {
@@ -141,7 +153,7 @@ void commandShell()
     EEPROM.write(LOCATION_I2C_ADDRESS, setting_i2c_address);
 
     newConfigData = true; //Tell the main loop to record the config.txt file
-    
+
     //Our I2C address may have changed because of user's command
     startI2C(); //Determine the I2C address we should be using and begin listening on I2C bus
 

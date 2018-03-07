@@ -22,7 +22,6 @@ Need to get freaky and have multiple data loggers on the same bus? You're in luc
 
 We will be adding more features to the firmware over time and we've made it very easy to upgrade! If you're comfortable sending a sketch to an Uno then you can upgrade the firmware on Qwiic OpenLog.
 
-
 Repository Contents
 -------------------
 
