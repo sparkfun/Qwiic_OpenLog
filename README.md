@@ -1,9 +1,9 @@
 SparkFun Qwiic OpenLog
 ========================================
 
-![SparkFun Qwiic OpenLog](https://cdn.sparkfun.com//assets/parts/1/2/8/2/4/14641-Qwiic_OpenLog-01a.jpg)
+![SparkFun Qwiic OpenLog](https://cdn.sparkfun.com/assets/parts/1/3/5/5/4/15164-SparkFun_Qwiic_OpenLog-01.jpg)
 
-[*SparkX Qwiic OpenLog (SPX-14641)*](https://www.sparkfun.com/products/14641)
+[*SparkFun Qwiic OpenLog (DEV-15164)*](https://www.sparkfun.com/products/15164)
 
 The [Qwiic](https://www.sparkfun.com/qwiic) system makes it easy to read all sorts of sensors, but what if you want to log that data? Qwiic OpenLog is an easy to use I2C based data logger. Simply write code like:
 
