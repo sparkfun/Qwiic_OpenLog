@@ -45,7 +45,7 @@
   "esc 36" - Change escape character tp $. Valid 0 to 255
   "num 5" - Change number of escape characters to 5. Valid 0 to 255
   "log 100" - Change number of log to start at LOG00100.TXT. Valid 0 to 65,534
-  If the master issues a read after these commands are sent, QOL responds with systemStatus byte
+  If the master issues a read after these commands are sent, QOL responds with valueMap.status byte
 
   "ls" - List files and subdirectories in current directory
   "ls *.*" - List files in current directory
@@ -53,7 +53,7 @@
   If the master issues a read after this command, QOL responds with /0 terminated string of object.
   Each subsequent read gets another object.
   Directory names end in / character.
-  
+
   "rm LOG*.TXT" - Remove all files that have the name LOG?????.TXT.
   "rm MONDAY" - Remove the *empty* directory MONDAY
   "rm -rf MONDAY" - Remove the directory MONDAY and any files within it
@@ -85,10 +85,6 @@
 */
 
 #include <Wire.h>
-
-//Set version numbers for this firmware
-const byte versionMajor = 1;
-const byte versionMinor = 0;
 
 #define __PROG_TYPES_COMPAT__ //Needed to get SerialPort.h to work in Arduino 1.6.x
 
@@ -146,25 +142,29 @@ const byte addr = 3;
 #define OFF   0x00
 #define ON    0x01
 
+#define LOCATION_SYSTEM_SETTING   0x02
+#define LOCATION_FILE_NUMBER_LSB  0x03
+#define LOCATION_FILE_NUMBER_MSB  0x04
+#define LOCATION_ESCAPE_CHAR    0x05
+#define LOCATION_MAX_ESCAPE_CHAR  0x06
+#define LOCATION_I2C_ADDRESS    0x0D
+
 SdFat sd;
 SdFile workingFile; //This is the main file we are writing to or reading from
+
+byte currentRegisterNumber;
 
 const unsigned int MAX_IDLE_TIME_MSEC = 500; //Max idle time before unit syncs buffer and goes to sleep
 
 //Variables used in the I2C interrupt
-volatile byte setting_i2c_address = 42; //The 7-bit I2C address of this OpenLog
 volatile byte setting_system_mode; //This is the mode the system runs in, default is MODE_NEWLOG
 volatile byte setting_escape_character; //This is the ASCII character we look for to break logging, default is ctrl+z
 volatile byte setting_max_escape_character; //Number of escape chars before break logging, default is 3
 
 #define LOCAL_BUFFER_SIZE 256
-byte incomingData[LOCAL_BUFFER_SIZE]; //Local buffer to record I2C bytes before committing to file
+byte incomingData[LOCAL_BUFFER_SIZE + 1]; //Local buffer to record I2C bytes before committing to file, add 1 for 0 character on end
 volatile int incomingDataSpot = 0; //Keeps track of where we are in the incoming buffer
 volatile unsigned long lastSyncTime = 0; //Keeps track of the last time the file was synced
-volatile byte escapeCharsReceived = 0; //We must receive X number of escape chars before going into command mode
-
-byte commandBuffer[I2C_BUFFER_SIZE]; //Contains the incoming I2C bytes of a user's command. Can't be bigger than 32 bytes, limited by Arduino I2C buffer
-volatile byte commandBufferSpot;
 
 //These are the different types of datums the OpenLog can respond with
 enum Response {
@@ -177,7 +177,6 @@ volatile Response responseType = RESPONSE_STATUS; //State engine that let's us k
 byte responseBuffer[I2C_BUFFER_SIZE]; //Used to pass data back to master
 volatile byte responseSize = 1; //Defines how many bytes of relevant data is contained in the responseBuffer
 
-volatile byte systemStatus = 0; //This byte contains the following status bits
 #define STATUS_SD_INIT_GOOD 0
 #define STATUS_LAST_COMMAND_SUCCESS 1
 #define STATUS_LAST_COMMAND_KNOWN 2
@@ -187,6 +186,109 @@ volatile byte systemStatus = 0; //This byte contains the following status bits
 char* fileListArguments; //When reading a list of files, we have to remember what to search for between I2C interrupts
 
 volatile boolean newConfigData = false;
+
+struct memoryMap {
+  byte id;
+  byte status;
+  byte firmwareMajor;
+  byte firmwareMinor;
+  byte i2cAddress;
+  byte logInit;
+  byte createFile;
+  byte mkDir;
+  byte cd;
+  byte readFile;
+  byte startPosition;
+  byte openFile;
+  byte writeFile;
+  byte fileSize;
+  byte list;
+  byte rm;
+  byte rmrf;
+};
+
+const memoryMap registerMap = {
+  .id = 0x00,
+  .status = 0x01,
+  .firmwareMajor = 0x02,
+  .firmwareMinor = 0x03,
+  .i2cAddress = 0x1E,
+  .logInit = 0x05,
+  .createFile = 0x06,
+  .mkDir = 0x07,
+  .cd = 0x08,
+  .readFile = 0x09,
+  .startPosition = 0x0A,
+  .openFile = 0x0B,
+  .writeFile = 0x0C,
+  .fileSize = 0x0D,
+  .list = 0x0E,
+  .rm = 0x0F,
+  .rmrf = 0x10,
+};
+
+volatile memoryMap valueMap = {
+  .id = 0x78,
+  .status = 0x00,
+  .firmwareMajor = 0x02,
+  .firmwareMinor = 0x00,
+  .i2cAddress = 0x2A,
+  .logInit = 0x00,
+  .createFile = 0x00,
+  .mkDir = 0x00,
+  .cd = 0x00,
+  .readFile = 0x00,
+  .startPosition = 0x00,
+  .openFile = 0x00,
+  .writeFile = 0x00,
+  .fileSize = 0x00,
+  .list = 0x00,
+  .rm = 0x00,
+  .rmrf = 0x00,
+};
+
+void idReturn(char *myData);
+void statusReturn(char *myData);
+void firmwareMajorReturn(char *myData);
+void firmwareMinorReturn(char *myData);
+void addressReturn(char *myData);
+void initFunction(char *myData);
+void createFile(char *myData);
+void mkDir(char *myData);
+void chDir(char *myData);
+void readFile(char *myData);
+void setStartPosition(char *myData);
+void openFile(char *myData);
+void writeFile(char *myData);
+void fileSize(char *myData);
+void listFiles(char *myData);
+void removeFiles(char *myData);
+void recursiveRemove(char *myData);
+
+struct functionMap {
+  byte registerNumber;
+  void (*handleFunction)(char *myData);
+};
+
+functionMap functions[] = {
+  {registerMap.id, idReturn},
+  {registerMap.status, statusReturn},
+  {registerMap.firmwareMajor, firmwareMajorReturn},
+  {registerMap.firmwareMinor, firmwareMinorReturn},
+  {registerMap.i2cAddress, addressReturn},
+  {registerMap.logInit, initFunction},
+  {registerMap.createFile, createFile},
+  {registerMap.mkDir, mkDir},
+  {registerMap.cd, chDir},
+  {registerMap.readFile, readFile},
+  {registerMap.startPosition, setStartPosition},
+  {registerMap.openFile, openFile},
+  {registerMap.writeFile, writeFile},
+  {registerMap.fileSize, fileSize},
+  {registerMap.list, listFiles},
+  {registerMap.rm, removeFiles},
+  {registerMap.rmrf, recursiveRemove},
+};
 
 void setup(void)
 {
@@ -221,18 +323,18 @@ void setup(void)
   //Setup SD & FAT
   if (sd.begin(SD_CHIP_SELECT, SPI_FULL_SPEED) == false)
   {
-    systemStatus &= ~(1 << STATUS_SD_INIT_GOOD); //Init failed
+    valueMap.status &= ~(1 << STATUS_SD_INIT_GOOD); //Init failed
     systemError(ERROR_CARD_INIT);
   }
-  systemStatus |= (1 << STATUS_SD_INIT_GOOD); //Init success!
+  valueMap.status |= (1 << STATUS_SD_INIT_GOOD); //Init success!
 
   if (sd.chdir() == false) //Change to root directory. All new file creation will be in root.
   {
-    systemStatus &= ~(1 << STATUS_SD_INIT_GOOD); //Init failed
-    systemStatus &= ~(1 << STATUS_IN_ROOT_DIRECTORY); //Init failed
+    valueMap.status &= ~(1 << STATUS_SD_INIT_GOOD); //Init failed
+    valueMap.status &= ~(1 << STATUS_IN_ROOT_DIRECTORY); //Init failed
     systemError(ERROR_ROOT_INIT);
   }
-  systemStatus |= (1 << STATUS_IN_ROOT_DIRECTORY); //We are in root
+  valueMap.status |= (1 << STATUS_IN_ROOT_DIRECTORY); //We are in root
 
   NewSerial.print(F("2"));
 
@@ -242,11 +344,11 @@ void setup(void)
   //Our I2C address may have changed from the config file
   startI2C(); //Determine the I2C address we should be using and begin listening on I2C bus
 
-  NewSerial.print(F("(Adr: "));
+  NewSerial.print(F("(Adr: 0x"));
   if (digitalRead(addr) == LOW)
-    NewSerial.print(0x29, DEC);
+    NewSerial.print(0x29, HEX);
   else
-    NewSerial.print(setting_i2c_address, DEC);
+    NewSerial.print(valueMap.i2cAddress, HEX);
   NewSerial.print(F(")"));
 
 #if DEBUG
@@ -260,8 +362,8 @@ void setup(void)
 
   sd.chdir("/"); //Change 'volume working directory' to root
 
-  systemStatus |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Last command was success (start up default)
-  systemStatus |= (1 << STATUS_LAST_COMMAND_KNOWN); //Last command was known (start up default)
+  valueMap.status |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Last command was success (start up default)
+  valueMap.status |= (1 << STATUS_LAST_COMMAND_KNOWN); //Last command was known (start up default)
 }
 
 void loop(void)
@@ -271,20 +373,7 @@ void loop(void)
   //If an amount of time passes, put OpenLog into low power mode
   if ( (millis() - lastSyncTime) > MAX_IDLE_TIME_MSEC) { //If we haven't received any characters after amount of time, goto sleep
 
-    noInterrupts(); //Disable I2C interrupt
-    if (workingFile.isOpen())
-    {
-      if (incomingDataSpot > 0)
-      {
-        workingFile.write(incomingData, incomingDataSpot);
-        incomingDataSpot = 0;
-        workingFile.sync(); //Sync the card before we go to sleep
-      }
-    }
-    interrupts();
-
     //STAT1_PORT &= ~(1 << STAT1); //Turn off stat LED to save power
-
     power_timer0_disable(); //Shut down peripherals we don't need
     power_spi_disable();
     power_usart0_disable();
@@ -312,53 +401,28 @@ void loop(void)
 //If a command is detected the command shell is run. This allows for clock stretching while we do file manipulations.
 void receiveEvent(int numberOfBytesReceived)
 {
+  incomingDataSpot = 0;
   while (Wire.available())
   {
-    //Record bytes to local array
-    incomingData[incomingDataSpot] = Wire.read();
-
-    if (incomingData[incomingDataSpot] == setting_escape_character)
+    currentRegisterNumber = Wire.read();
+    while (Wire.available())
     {
-      escapeCharsReceived++;
-      if (escapeCharsReceived == setting_max_escape_character)
-      {
-        //We have a command to parse
-
-        //Get the remainder of the command
-        commandBufferSpot = 0;
-        while (Wire.available())
-        {
-          commandBuffer[commandBufferSpot++] = Wire.read();
-          //commandBuffer is 32 bytes. We shouldn't spill over because receiveEvent can't receive more than 32 bytes
-        }
-        incomingDataSpot -= setting_max_escape_character; //Prevent logging of escape chars
-
-        //Before we do any commands, record buffer to file
-        if (incomingDataSpot > 0)
-        {
-          workingFile.write(incomingData, incomingDataSpot);
-          workingFile.sync(); //Sync the card before we do commands
-        }
-
-        incomingDataSpot = -1; //Because it's about to increment
-        escapeCharsReceived = 0;
-        lastSyncTime = millis();
-
-        commandShell(); //We want to act on any commands here so that the clock is stretched while we are doing card manipulations
-      }
-    }
-
-    incomingDataSpot++;
-
-    if (incomingDataSpot == LOCAL_BUFFER_SIZE)
-    {
-      //Record buffer to file
-      workingFile.write(incomingData, LOCAL_BUFFER_SIZE);
-      incomingDataSpot = 0;
-      escapeCharsReceived = 0;
-      lastSyncTime = millis();
+      incomingData[incomingDataSpot++] = Wire.read();
+      incomingData[incomingDataSpot] = 0;
+      //incomingData is 32 bytes. We shouldn't spill over because receiveEvent can't receive more than 32 bytes
     }
   }
+  for (int regNum = 0; regNum < (sizeof(memoryMap) / sizeof(byte)); regNum++)
+  {
+    if (functions[regNum].registerNumber == currentRegisterNumber)
+    {
+      valueMap.status &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Assume command failed
+      valueMap.status |= (1 << STATUS_LAST_COMMAND_KNOWN); //Assume command is known
+      functions[regNum].handleFunction(incomingData);
+      incomingDataSpot = 0;
+    }
+  }
+  //Record bytes to local array
 }
 
 //Send back a number of bytes via an array, max 32 bytes
@@ -371,11 +435,11 @@ void requestEvent()
   {
     case RESPONSE_STATUS:
       //Respond with the system status byte
-      Wire.write(systemStatus);
+      Wire.write(valueMap.status);
 
       //Once read, clear the last command known and last command success bits
-      systemStatus &= ~(1 << STATUS_LAST_COMMAND_SUCCESS);
-      systemStatus &= ~(1 << STATUS_LAST_COMMAND_KNOWN);
+      valueMap.status &= ~(1 << STATUS_LAST_COMMAND_SUCCESS);
+      valueMap.status &= ~(1 << STATUS_LAST_COMMAND_KNOWN);
       break;
 
     case RESPONSE_VALUE:
@@ -451,13 +515,13 @@ void blink_error(byte ERROR_TYPE)
   }
 }
 
-//Begin listening on I2C bus as I2C slave using the global variable setting_i2c_address
+//Begin listening on I2C bus as I2C slave using the global variable valueMap.i2cAddress
 void startI2C()
 {
   Wire.end();
   if (digitalRead(addr) == LOW)
     Wire.begin(0x29); //Force address to 0x29 if user has soldered jumper closed
   else
-    Wire.begin(setting_i2c_address); //Start I2C and answer calls using address from EEPROM
+    Wire.begin(EEPROM.read(LOCATION_I2C_ADDRESS)); //Start I2C and answer calls using address from EEPROM
 }
 

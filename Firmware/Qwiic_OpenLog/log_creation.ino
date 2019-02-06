@@ -1,7 +1,7 @@
 /*
- These functions create a new log, sequential log, or append to a log file.
+  These functions create a new log, sequential log, or append to a log file.
 
- These are used when OpenLog powers up and when the user asks to change files via new or append commands  
+  These are used when OpenLog powers up and when the user asks to change files via new or append commands
 */
 
 //Log to a new file everytime the system boots
@@ -13,7 +13,7 @@ char* newLog(void)
   SdFile newFile; //This will contain the file for SD writing
 
   //Combine two 8-bit EEPROM spots into one 16-bit number
-  uint16_t newFileNumber = (EEPROM.read(LOCATION_FILE_NUMBER_MSB)<<8) | EEPROM.read(LOCATION_FILE_NUMBER_LSB);
+  uint16_t newFileNumber = (EEPROM.read(LOCATION_FILE_NUMBER_MSB) << 8) | EEPROM.read(LOCATION_FILE_NUMBER_LSB);
 
   //If both EEPROM spots are 255 (0xFF), that means they are un-initialized (first time OpenLog has been turned on)
   //Let's init them both to 0
@@ -116,14 +116,13 @@ boolean appendFile(char* file_name)
   // O_CREAT - create the file if it does not exist
   // O_APPEND - seek to the end of the file prior to each write
   // O_WRITE - open for write
-  if (!workingFile.open(file_name, O_CREAT | O_APPEND | O_WRITE)) return(false); //File failed to open
+  if (!workingFile.open(file_name, O_CREAT | O_APPEND | O_WRITE)) return (false); //File failed to open
 
   if (workingFile.fileSize() == 0) {
     //This is a trick to make sure first cluster is allocated - found in Bill's example/beta code
     workingFile.rewind();
     workingFile.sync();
   }
-
-  return(true); //File is now open
+  return (true); //File is now open
 }
 

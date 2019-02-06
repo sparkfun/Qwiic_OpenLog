@@ -71,11 +71,11 @@ void readSystemSettings(void)
 
   //Read what I2C address we should use
   //Default is 42 (or 41 if jumper is closed)
-  setting_i2c_address = EEPROM.read(LOCATION_I2C_ADDRESS);
-  if (setting_i2c_address == 255)
+  valueMap.i2cAddress = EEPROM.read(LOCATION_I2C_ADDRESS);
+  if (valueMap.i2cAddress == 255)
   {
-    setting_i2c_address = 42; //By default, we listen for 42
-    EEPROM.write(LOCATION_I2C_ADDRESS, setting_i2c_address);
+    valueMap.i2cAddress = 42; //By default, we listen for 42
+    EEPROM.write(LOCATION_I2C_ADDRESS, valueMap.i2cAddress);
   }
 }
 
@@ -185,11 +185,11 @@ void readConfigFile(void)
   //We now have the settings loaded into the global variables. Now check if they're different from EEPROM settings
   boolean recordNewSettings = false;
 
-  if (new_system_i2c_address != setting_i2c_address) {
+  if (new_system_i2c_address != valueMap.i2cAddress) {
     //If the i2c address from the file is different from the current setting,
     //then update the setting to the file setting and re-init Wire
     EEPROM.write(LOCATION_I2C_ADDRESS, new_system_i2c_address);
-    setting_i2c_address = new_system_i2c_address;
+    valueMap.i2cAddress = new_system_i2c_address;
 
     recordNewSettings = true;
   }
@@ -233,7 +233,7 @@ void readConfigFile(void)
     seqLog();
     
   //workingFile pointer has now been set
-  systemStatus |= (1<<STATUS_FILE_OPEN); //File is open for business  
+  valueMap.status |= (1<<STATUS_FILE_OPEN); //File is open for business  
 
   //All done! New settings are loaded. System will now operate off new config settings found in file.
 }
