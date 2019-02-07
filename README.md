@@ -25,10 +25,15 @@ We will be adding more features to the firmware over time and we've made it very
 Repository Contents
 -------------------
 
-* **/Examples** - A large number of examples to show how to record logs, create new logs, create and navigate directories, remove files and directories, and read the contents of files.
-* **/Firmware** - The core sketch that runs Qwiic OpenLog
+* **/Firmware/QwiicOpenLog** - The core sketch that runs Qwiic OpenLog
 * **/Hardware** - Eagle design files (.brd, .sch)
-* **/Programming** - avrdude based tools for programming Qwiic OpenLogs
+
+Documentation
+--------------
+* **[Library](https://github.com/sparkfun/SparkFun_Qwiic_OpenLog_Arduino_Library)** - Arduino library for the Qwiic OpenLog.
+* **[Hookup Guide](https://learn.sparkfun.com/tutorials/qwiic-openlog-hookup-guide)** - Basic hookup guide for the Qwiic OpenLog.
+* **[SparkFun Fritzing repo](https://github.com/sparkfun/Fritzing_Parts)** - Fritzing diagrams for SparkFun products.
+
 
 License Information
 -------------------
