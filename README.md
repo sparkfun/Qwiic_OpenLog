@@ -25,7 +25,7 @@ We will be adding more features to the firmware over time and we've made it very
 Repository Contents
 -------------------
 
-* **/Firmware/QwiicOpenLog** - The core sketch that runs Qwiic OpenLog
+* **/Firmware/Qwiic_OpenLog** - The core sketch that runs Qwiic OpenLog
 * **/Hardware** - Eagle design files (.brd, .sch)
 
 Documentation
