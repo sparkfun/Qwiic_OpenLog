@@ -90,7 +90,7 @@
 
 #include <SPI.h>
 #include <SdFat.h> //We do not use the built-in SD.h file because it calls Serial.print
-#include <SerialPort.h> //This is a new/beta library written by Bill Greiman. You rock Bill!
+#include "SerialPort.h" //This is a new/beta library written by Bill Greiman. You rock Bill!
 #include <EEPROM.h>
 #include <FreeStack.h> //Allows us to print the available stack/RAM size
 
@@ -205,6 +205,7 @@ struct memoryMap {
   byte list;
   byte rm;
   byte rmrf;
+  byte syncFile;
 };
 
 const memoryMap registerMap = {
@@ -225,6 +226,7 @@ const memoryMap registerMap = {
   .list = 0x0E,
   .rm = 0x0F,
   .rmrf = 0x10,
+  .syncFile = 0x11,
 };
 
 volatile memoryMap valueMap = {
@@ -245,6 +247,7 @@ volatile memoryMap valueMap = {
   .list = 0x00,
   .rm = 0x00,
   .rmrf = 0x00,
+  .syncFile = 0x00,
 };
 
 void idReturn(char *myData);
@@ -264,6 +267,7 @@ void fileSize(char *myData);
 void listFiles(char *myData);
 void removeFiles(char *myData);
 void recursiveRemove(char *myData);
+void syncFile(char *myData);
 
 struct functionMap {
   byte registerNumber;
@@ -288,6 +292,7 @@ functionMap functions[] = {
   {registerMap.list, listFiles},
   {registerMap.rm, removeFiles},
   {registerMap.rmrf, recursiveRemove},
+  {registerMap.syncFile, syncFile},
 };
 
 void setup(void)
@@ -401,14 +406,19 @@ void loop(void)
 //If a command is detected the command shell is run. This allows for clock stretching while we do file manipulations.
 void receiveEvent(int numberOfBytesReceived)
 {
+  //I didn't see anywhere else in the code where lastSyncTime is actually updated so wouldn't it always go to
+  //sleep after the same amount of time???
+  lastSyncTime = millis();
   incomingDataSpot = 0;
+  
+  //because I'm paranoid
+  memset(incomingData, 0, sizeof(incomingData));
   while (Wire.available())
   {
     currentRegisterNumber = Wire.read();
     while (Wire.available())
     {
       incomingData[incomingDataSpot++] = Wire.read();
-      incomingData[incomingDataSpot] = 0;
       //incomingData is 32 bytes. We shouldn't spill over because receiveEvent can't receive more than 32 bytes
     }
   }
@@ -419,7 +429,6 @@ void receiveEvent(int numberOfBytesReceived)
       valueMap.status &= ~(1 << STATUS_LAST_COMMAND_SUCCESS); //Assume command failed
       valueMap.status |= (1 << STATUS_LAST_COMMAND_KNOWN); //Assume command is known
       functions[regNum].handleFunction(incomingData);
-      incomingDataSpot = 0;
     }
   }
   //Record bytes to local array
@@ -431,6 +440,7 @@ void receiveEvent(int numberOfBytesReceived)
 //The user sets the response type using the command interface
 void requestEvent()
 {
+  lastSyncTime = millis();
   switch (responseType)
   {
     case RESPONSE_STATUS:
@@ -524,4 +534,3 @@ void startI2C()
   else
     Wire.begin(EEPROM.read(LOCATION_I2C_ADDRESS)); //Start I2C and answer calls using address from EEPROM
 }
-

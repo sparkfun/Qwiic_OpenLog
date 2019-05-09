@@ -216,8 +216,18 @@ void openFile(char *myData) {
   }
 }
 
+//we don't actually want to sync() every time we write to the buffer
+//writing a full buffer to the card and writing 1 or 2 bytes seems
+//to take about the same amount of time. Once the buffer is full
+//it will automatically sync anyways.
 void writeFile(char *myData) {
-  workingFile.write(myData, sizeof(myData));
+  workingFile.write(myData, strlen(myData));
+  valueMap.status |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command success
+}
+
+//if you definitely want your buffer synced right now then you can 
+//manually call it
+void syncFile(char *myData) {
   workingFile.sync();
   valueMap.status |= (1 << STATUS_LAST_COMMAND_SUCCESS); //Command success
 }
@@ -549,4 +559,3 @@ void loadArrayWithFileName(FatFile * theDir, char * cmdStr)
   tempFile.close();
   return;
 }
-
